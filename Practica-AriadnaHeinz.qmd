@@ -1,0 +1,429 @@
+---
+format: html
+editor: visual
+  markdown: 
+    wrap: 72
+---
+
+Vasmos a cargar el dataset de AirBnB descargado de [aquí](https://public.opendatasoft.com/explore/dataset/airbnb-listings/export/?disjunctive.host_verifications&disjunctive.amenities&disjunctive.features&q=Madrid&dataChart=eyJxdWVyaWVzIjpbeyJjaGFydHMiOlt7InR5cGUiOiJjb2x1bW4iLCJmdW5jIjoiQ09VTlQiLCJ5QXhpcyI6Imhvc3RfbGlzdGluZ3NfY291bnQiLCJzY2llbnRpZmljRGlzcGxheSI6dHJ1ZSwiY29sb3IiOiJyYW5nZS1jdXN0b20ifV0sInhBeGlzIjoiY2l0eSIsIm1heHBvaW50cyI6IiIsInRpbWVzY2FsZSI6IiIsInNvcnQiOiIiLCJzZXJpZXNCcmVha2Rvd24iOiJyb29tX3R5cGUiLCJjb25maWciOnsiZGF0YXNldCI6ImFpcmJuYi1saXN0aW5ncyIsIm9wdGlvbnMiOnsiZGlzanVuY3RpdmUuaG9zdF92ZXJpZmljYXRpb25zIjp0cnVlLCJkaXNqdW5jdGl2ZS5hbWVuaXRpZXMiOnRydWUsImRpc2p1bmN0aXZlLmZlYXR1cmVzIjp0cnVlfX19XSwidGltZXNjYWxlIjoiIiwiZGlzcGxheUxlZ2VuZCI6dHJ1ZSwiYWxpZ25Nb250aCI6dHJ1ZX0%3D&location=16,41.38377,2.15774&basemap=jawg.streets)
+
+![](descargar.png)
+
+```{r}
+airbnb<-read.csv('airbnb-listings.csv',sep = ';')
+options(repr.plot.height=4,repr.plot.width=6,repr.plot.res = 300)
+head(airbnb)
+```
+
+1.  Vamos a quedarnos con las columnas de mayor interés: 'City','Room.Type','Neighbourhood','Accommodates','Bathrooms','Bedrooms','Beds','Price','Square.Feet','Guests.Included','Extra.People','Review.Scores.Rating','Latitude', 'Longitude' Nos quedarmos solo con las entradas de Madrid para Room.Type=="Entire home/apt" y cuyo barrio (Neighbourhood) no está vacio '' Podemos eliminar las siguientes columnas que ya no son necesarias: "Room.Type",'City' Llama a nuevo dataframe df_madrid.
+
+```{r}
+library(dplyr)
+df_madrid_draft <- airbnb |> select(City,Room.Type,Neighbourhood,Accommodates,Bathrooms,Bedrooms,Beds,Price,Square.Feet,Guests.Included,Extra.People,Review.Scores.Rating,Latitude, Longitude) |> filter (City == 'Madrid', Room.Type == 'Entire home/apt', Neighbourhood != '')
+df_madrid <- df_madrid_draft[ , !(names(df_madrid_draft) %in% c("Room.Type", "City"))]  #Selects all columns except for "Room.Type" and "City" which are no longer needed
+head(df_madrid)
+```
+
+2.  Crea una nueva columna llamada Square.Meters a partir de Square.Feet. Recuerda que un pie cuadrado son 0.092903 metros cuadrados.
+
+```{r}
+df_madrid <- df_madrid %>% 
+  mutate(Square.Meters = Square.Feet * 0.092903)
+head(df_madrid)
+head(df_madrid[, c("Square.Feet", "Square.Meters")])
+```
+
+\
+
+3.  ¿Que porcentaje de los apartamentos no muestran los metros cuadrados? Es decir, ¿cuantos tienen NA en Square.Meters?
+
+```{r}
+Square.Meters_is_na <- sum(is.na(df_madrid$Square.Meters)) / nrow(df_madrid)
+cat(Square.Meters_is_na*100, '% of Madrid AirBnB accommodations do not have a value for surface area.\n',sep = '')
+```
+
+4.  De todos los apartamentos que tienen un valor de metros cuadrados diferente de NA ¿Que porcentaje de los apartamentos tienen 0 metros cuadrados?
+
+```{r}
+Square.Meters_is_zero <- sum(df_madrid$Square.Meters == 0 & !is.na(df_madrid$Square.Meters)) / sum(!is.na(df_madrid$Square.Meters))
+cat(Square.Meters_is_zero*100, '% of Madrid AirBnB accommodations that show a value of surface area contain the value 0.\n', sep = '')
+```
+
+5.  Reemplazar todos los 0m\^2 por NA
+
+```{r}
+#This command replaces all 0 values of the "Square.Meters" column by NA (I am leaving the "Square.Feet" column as is).
+df_madrid$Square.Meters[df_madrid$Square.Meters == 0] <- NA
+
+#When plotting the two columns side by side, we can see the rows where "0" square feet display "NA" square meters (128 replacements have been done)
+df_madrid[c("Square.Meters", "Square.Feet")] |> filter(df_madrid$"Square.Feet" == 0)
+cat(nrow(df_madrid[is.na(df_madrid$Square.Meters), ]),' rows contain no information of surface area, which corresponds to ', 100*nrow(df_madrid[is.na(df_madrid$Square.Meters), ])/nrow(df_madrid), '% of entries.\n')  #Here I am practicing using nrow() instead of sum()
+
+summary(df_madrid$Square.Meters)
+```
+
+Hay muchos NAs, vamos a intentar crear un modelo que nos prediga cuantos son los metros cuadrados en función del resto de variables para tratar de rellenar esos NA. Pero **antes de crear el modelo** vamos a hacer: \* pintar el histograma de los metros cuadrados y ver si tenemos que filtrar algún elemento más. \* crear una variable sintética nueva basada en la similitud entre barrios que usaremos en nuestro modelo.
+
+6.  Pinta el histograma de los metros cuadrados y ver si tenemos que filtrar algún elemento más
+
+    ```{r}
+    library(ggplot2)
+    hist(df_madrid$Square.Meters, 
+         main = "Square.Meters histogram",
+         col = "lightblue") 
+
+    df_madrid_less_300 <- df_madrid$Square.Meters[!is.na(df_madrid$Square.Meters) & df_madrid$Square.Meters < 300]
+    hist(df_madrid_less_300, 
+         main = "Square.Meters histogram",
+         col = "green")
+    cat("Number of values and summary stats of Square.Meters >= 300:\n")
+    length(df_madrid_less_300)
+    summary(df_madrid_less_300)
+
+    df_madrid_more_300 <- df_madrid$Square.Meters[!is.na(df_madrid$Square.Meters) & df_madrid$Square.Meters >= 300]
+    cat("Number of values and summary stats of Square.Meters < 300:\n")
+    length(df_madrid_more_300)
+    summary(df_madrid_more_300)
+
+    df_madrid_less_20 <- df_madrid$Square.Meters[!is.na(df_madrid$Square.Meters) & df_madrid$Square.Meters < 20]
+    cat("Number of values and summary stats of Square.Meters < 20:\n")
+    length(df_madrid_less_20)
+    summary(df_madrid_less_20)
+
+    # REMARKS: 
+    # All apartments are below 220 m² except for one at 480 m².
+    # There are 45 entries of apartments with a surface area less than 20 m². 
+    # These are probably just individual rooms that have been mislabeled as entire apartments.
+    ```
+
+------------------------------------------------------------------------
+
+7.  Asigna el valor NA a la columna Square.Meters de los apartamentos que tengan menos de 20 m\^2
+
+    ```{r}
+    #df_madrid_draft2 <- df_madrid
+    #summary(df_madrid_draft2$Square.Meters)
+
+    df_madrid$Square.Meters[df_madrid$Square.Meters < 20] <- NA
+    summary(df_madrid$Square.Meters)
+
+    ```
+
+------------------------------------------------------------------------
+
+8.  Existen varios Barrios que todas sus entradas de Square.Meters son NA, vamos a eliminar del dataset todos los pisos que pertenecen a estos barrios.
+
+    ```{r}
+    # Neighbourhoods for which all "Square.Meters" values are NA:
+    all_na_neighbourhoods <- df_madrid |>
+      group_by(Neighbourhood) |>
+      summarise(all_sqm_na = all(is.na(Square.Meters))) |>
+      filter(all_sqm_na) |>
+      pull(Neighbourhood)
+    cat('\nNeighbourhoods that only have NA for Square.Meters are:\n', sort(all_na_neighbourhoods), sep = '\n   ')
+    
+    # Filter dataframe and keep only those neighbourhoods that are not in all_na_neighbourhoods
+    #df_madrid_draft3 <- df_madrid
+    df_madrid <- df_madrid |>
+      filter(!Neighbourhood %in% all_na_neighbourhoods)
+    cat('\nRemaining neighbourhoods in df_madrid dataframe:\n', sort(unique(df_madrid$Neighbourhood)), sep = '\n  ')
+
+    ```
+
+    ------------------------------------------------------------------------
+
+9.  ¿Tienen todos los barrios los mismos metros cuadrados de media? ¿Con que test lo comprobarías?
+
+    ```{r}
+    # To determine the type of test needed in order to answer the question, first we need to know whether the data follows a normal distribution ("distribución gaussiana"). 
+    
+    # Assuming a normal distribution, we would then use a one-factor ordinary ANOVA test if the variances are homogeneous, or an ANOVA Welch test if they are not. The hypotheses would be as follows:
+    #  * H0 = the means of Square.Meters values are the same in all neighbourhoods
+    #  * H1 = at least one neighbourhood has a significantly different mean Square.Meters.
+    
+    # Assuming the distribution is not normal,  we would need to resort to a Kruskal-Wallis test.
+    ```
+    
+    ```{r}
+    # Let's start by evaluating whether the distribution is normal or not. 
+    # For this we can take a look at QQ (quantile-quantile) plots by neighborhood, or else conduct a Shapiro test.
+    
+    # First let's "clean up" the data by removing the rows that contain NA in the Square.Meters column:
+    df_madrid_withoutNA <- df_madrid[!is.na(df_madrid$Square.Meters), ]
+
+    # Then let's plot Quantile-Quantile graphs by neighbourhood. If the data points are aligned, then they follow a normal distribution. Otherwise, they don't.
+    library(ggplot2)
+    ggplot(df_madrid_withoutNA, aes(sample = Square.Meters)) +
+      stat_qq() +
+      stat_qq_line() +
+      facet_wrap(~ Neighbourhood)
+    ```
+    
+    ```{r}
+    # CONCLUSION FROM THE QQ PLOTS:
+    # Some neighbourhoods have very few datapoints available. 
+    # Most seem to follow a line reasonably well, with exceptions such as Almenara, Cortes, Trafalgar, or Sol. 
+    
+    # Let's conduct a Shapiro-Wilk test to get a more quantitative result. If the resulting p-value is less than 0.05 we can disregard normality:
+    # Since the Shapiro-Wilk test can only be done if at least 3 data points are present for each neighbourhood, I will further "clean up" the data set by removing the rows corresponding to neighbourhoods with less than 3 rows with non-NA values of Square.Meters, and then conduct the test:
+    df_madrid_withoutNA_3 <- df_madrid_withoutNA |> group_by(Neighbourhood) |> filter(n() >= 3)
+    df_madrid_withoutNA_3 <- df_madrid_withoutNA_3 |> droplevels()  #This eliminates the unwanted rows
+
+    by(df_madrid_withoutNA_3$Square.Meters, df_madrid_withoutNA_3$Neighbourhood, shapiro.test) #Shapiro test
+    ```
+    
+    ```{r}
+    # Neighbourhoods that had been flagged from the qq plots indeed had p-values below 0.05, with the exception of Trafalgar. Two others (Castellana and Malasaña) were also found to have a very low p-value. Approximately 5 or 6 neighbourhoods do not seem to follow a normal distribution: Almenara, Castellana, Cortes, Malasaña, Sol, and possibly Trafalgar.
+    
+    # CONCLUSION ON NORMALITY: While normality should be disregarded for these neighbourhoods, it is a reasonable assumption for most neighbourhoods.
+    
+    # Now let's check for homogeneity of variances using the Bartlett test. If the p-value obtained is less than 0.05, variances are not homogeneous and the ANOVA Welch test should be used instead of the ordinary ANOVA test.
+    cat('\nBartlett test of homogeneity of variances:\n')
+    bartlett.test(Square.Meters ~ Neighbourhood, data = df_madrid_withoutNA_3)
+    ```
+    ```{r}
+    # Variances are clearly not homogeneous since the p-value is extremely small.
+    # Could it be because we have those six neighbourhoods that are not normally distributed?
+    # Let's filter them out and find out:
+    library(dplyr)
+    df_madrid_restricted <- df_madrid_withoutNA_3 |> filter(!Neighbourhood %in% c("Almenara", "Castellana", "Cortes", "Malasaña", "Sol"))  #Keeping Trafalgar since it had a reasonable Shapiro p-value.
+    cat('\nBartlett test of homogeneity of variances without the five non-normally distributed neighbourhoods:\n')
+    bartlett.test(Square.Meters ~ Neighbourhood, data = df_madrid_restricted)
+
+    ```
+    CONCLUSION ON HOMOGENEITY: 
+    - When considering all neighbourhoods, the p-value of 0.000004042 is extremely small and homogeneity should be rejected.
+    - When ignoring the five neighbourhoods that are not normally distributed, the resulting p-value of 0.1343 is not sufficiently small to be able to reject homogeneity. 
+    
+    Thus an ordinary ANOVA test would be justified if we do not include the five neighbourhoods mentioned earlier. 
+    The NULL and alternate hypotheses would be as follows:
+    * H0 = the means of Square.Meters values are the same in all neighbourhoods
+    * H1 = at least one neighbourhood has a significantly different mean Square.Meters.
+    If the p-value obtained is low (below 0.05), I will reject the null hypothesis and instead consider that at least one neighbourhood has a statistically significant different mean Square.Meters.
+    
+    ```{r}
+    df_madrid_restricted$Neighbourhood <- as.factor(df_madrid_restricted$Neighbourhood)
+    cat("\nResult of ANOVA 1-variable test (normal distribution with homogeneous variances) for the normally distributed neighbourhoods only:\n")
+    summary(aov(Square.Meters ~ Neighbourhood, data = df_madrid_restricted))
+
+    ```
+    
+    CONCLUSION FROM ANOVA TEST: 
+    
+     - The NULL hypothesis (H0) should be rejected due to the very low p-value, even when not including the 5 neighbourhood that are not normally distributed. 
+     - Therefore the mean Square.Meters is DIFFERENT IN AT LEAST ONE NEIGHBOURHOOD. 
+    
+    
+    KRUSKAL-WALLIS TEST:
+    
+    Since the data is not normally distributed in at least 5 neighbourhoods, it is justified to use a KRUSKAL-WALLIS test instead over the entire dataset.
+    This test also happens to be less sensitive to outliers and so it might be more robust in a case like ours, where we also had one apartment that had a surface area clearly much higher than the others.
+    
+    ```{r}
+    cat("\nResult of Kruskal-Wallis test (no assumption of normal distribution, less sensitive to outliers):\n")
+    df_madrid_withoutNA$Neighbourhood <- as.factor(df_madrid_withoutNA$Neighbourhood)
+    kruskal.test(Square.Meters ~ Neighbourhood, data = df_madrid_withoutNA)
+    ```
+    CONCLUSION FROM KRUSKAL-WALLIS TEST:
+      - The Kruskal-Wallis test confirms that the means of Square.Meters cannot be assumed to be homogeneous across neighbourhoods.
+      - We must conclude that the mean Square.Meters is DIFFERENT IN AT LEAST ONE NEIGHBOURHOOD.
+
+    FINAL CONCLUSION: The mean Square.Meters IS DIFFERENT IN AT LEAST ONE NEIGHBOURHOOD, as confirmed by both the ANOVA and KRUSKAL-WALLIS test independently.
+
+    ------------------------------------------------------------------------
+
+10. Vamos a agrupar los barrios por metros cuadrados. Podemos usar una matriz de similaridad de Tukey. Muestra como de similares o diferentes son los barrios si nos fijámos únicamente en los metros cuadrados de los pisos. ¿Como se diferencia la media del Barrio A al Barrio B? (Es decir, cual sería el pvalor suponiendo una H0 en la que las medias son iguales)
+```{r}
+TukeyHSD(aov(Square.Meters ~ Neighbourhood, data = df_madrid_withoutNA))
+tukey_result <- TukeyHSD(aov(Square.Meters ~ Neighbourhood, data = df_madrid_withoutNA))
+```
+------------------------------------------------------------------------
+    CONCLUSIONS FROM TUKEY TEST:
+    - Most neighbourhood-to-neighbourhood comparisons have an adjusted p-value much above 0.05, often even very close to 1, which indicates that there is no evidence that the difference in their mean Square.Meters is statistically significant. Thus the difference in the means could just be a coincidence in all of these cases. 
+    Example: 
+      Rios Rosas-Acacias                1.350500e+02  -42.573446  312.673435 0.4982054
+    For the pair Rios Rosas - Acacias, the mean Square.Meters is 135 m² higher in Rios Rosas than Acacias. However, the 0.498 adjusted p-value (about 10 times higher than 0.050) indicates that the difference in means is not statistically significant, meaning it could be coincidental. The lower upr of -42.6 and higher upr of 312.7 give the spread of possible difference in means with a 95% confidence level. Since the value 0 is included in this 95% confidence spread, the mean Square.Meters for the two neighbourhoods could be equal or could even be up to 42 m² higher in Acacias than in Rios Rosas! 
+
+    - In contrast, a few comparisons have adjusted p-values lower than the threshold of 0.05, which indicates that in these cases the difference in means is indeed significant and cannot be a coincidence. In the examples below, extracted from the Tukey results, we can clearly observe that the 95% confidence interval does not include 0, and thus that the difference in means is statistically significant. In all of the cases displayed below, Jerónimos has a statistically significant higher Square.Meters mean than the other neighbourhoods.
+      Jerónimos-Acacias                 2.075608e+02   67.137126  347.984446 0.0000238
+      Jerónimos-Adelfas                 2.025750e+02   14.176882  390.973101 0.0185749
+      Jerónimos-Almagro                 2.225491e+02   34.151027  410.947246 0.0039193
+      Jerónimos-Arapiles                1.750293e+02   21.202840  328.855664 0.0075686
+      Jerónimos-Argüelles               1.885466e+02   48.122979  328.970298 0.0002744
+      Jerónimos-Barajas                 2.355556e+02   47.157447  423.953666 0.0013061
+
+11. En el punto anterior has creado una matriz de p-valores que indica como de parecidos son dos barrios. Si su pvalor es bajo significa que los barrios son diferentes, si es alto significa que los barrios se parecen. Esta matriz la podemos usar como matriz de distancia si restamos el pvalor a 1. Es decir si usamos como distancia 1-pvalor. De esta forma barrios con un pvalor alto tendrán una distancia mayor que aquellos con un pvalor bajo. Usando esta última métrica como matriz de distancias dibuja un dendrograma de los diferentes barrios.
+```{r}
+# First I will display the Tukey results in a dataframe to extract p-values more easily.
+df_tukey<-data.frame(tukey_result$Neighbourhood)
+
+# Then I will list all neighbourhoods and classify them alphabetically, and create a matrix of p-values, with the neighbourhoods as row and column names.
+cn <-sort(unique(df_madrid_withoutNA$Neighbourhood))
+matrix_p <- matrix(NA, length(cn),length(cn))
+rownames(matrix_p) <- cn
+colnames(matrix_p) <- cn
+
+# Next, I will populate the matrix with:
+  # Tukey results in the lower triangle and the same values (using the transposed matrix) in the upper triangle.
+  # Values of 1 in the diagonal, to prepare for obtaining 0 when creating the distance matrix by subtracting the p-values from 1.
+matrix_p[lower.tri(matrix_p) ] <- round(df_tukey$p.adj,4)
+matrix_p[upper.tri(matrix_p) ] <- t(matrix_p)[upper.tri(matrix_p)] 
+diag(matrix_p) <- 1
+
+# Finally, I will calculate the distance matrix by subtracting the p-values matrix from 1.
+matrix_dist <- 1 - matrix_p
+
+# The resulting matrices are as follows:
+cat('\np-values matrix:\n')
+head(matrix_p)
+cat('\nDistance matrix:\n')
+head(matrix_dist)
+
+```
+
+```{r}
+# In this section, I will display the results of the distance-matrix using a visual.
+library(ggplot2)
+library(reshape2)
+df_dist <- melt(matrix_dist)
+ggplot(df_dist, aes(x=Var1, y=Var2, fill=value))+
+  geom_tile(colour = "black")+
+  geom_text(aes(label=paste(round(value*100,0),"%")),size = 3) +
+  scale_fill_gradient(low = "white",high = "steelblue")+
+  ylab("Class")+xlab("Class")+theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none")
+
+
+```
+  While the graph is difficult to read, we can see the blue lines corresponding to high differences for the neighbourhoods of Jerónimos and also, but less significantly for Ríos Rosas. We could create a similar graph but highlighting the larger distances, for instance by using distance values larger than 0.2 or 20%.
+  
+```{r}
+library(ggplot2)
+library(reshape2)
+df_dist <- melt(matrix_dist)
+df_dist_filtered <- subset(df_dist, value > 0.2)
+
+ggplot(df_dist_filtered, aes(x=Var1, y=Var2, fill=value))+
+geom_tile(colour = "black")+
+geom_text(aes(label=paste(round(value*100,0),"%")),size = 3) +
+scale_fill_gradient(low = "white",high = "steelblue")+
+ylab("Class")+xlab("Class")+theme_bw()+
+theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.position="none")
+```
+In the above graph, we can see more detail. Clearly, Jerónimos is quite different from most other neighbourhoods, but not as much from Ríos Rosas, Fuente del Berro o El Tréintaiseis. Ríos Rosas, Recoletos or a few other neighbourhoods also seem to exhibit differences. 
+
+
+DENDROGRAM:
+
+I will now proceed to drawing a DENDROGRAM to see if we can further investigate how to separate our neighbourhoods into clusters.
+
+```{r}
+hc <- hclust(as.dist(matrix_dist),method="complete")   #Calculates the different divisions that will go in the dendrogram
+hcd <- as.dendrogram(hc)  #Plots the dendrogram (is always used after previous command)
+par(cex=0.7)
+plot(hcd)
+```
+
+------------------------------------------------------------------------
+
+10. ¿Que punto de corte sería el aconsejable?, ¿cuantos clusters aparecen?
+
+
+REMARKS FROM DENDROGRAM:
+
+I am noticing two distinct clusters already at values of distance approximately equal to 1, which turn into three clusters for values of distance approximately below 0.4, and finally four clusters for values of distance below 0.02 approximately. 
+
+I will use the cutree() command to get more exact values.
+
+```{r}
+library(dendextend)
+
+clusters_2 <- cutree(hcd, h=0.99)  # 2 clusters
+clusters_3 <- cutree(hcd, h=0.4)   # 3 clusters
+clusters_4 <- cutree(hcd, h=0.025)   # 4 clusters
+plot(color_branches(hcd, h=0.025),leaflab="none")
+```
+REMARKS FROM CUT DENDROGRAM:
+
+Given the look of the dendrogram and the appearance with each of the cuts, it is fair to assume that there are two large groups, one containing two neighbourhoods, and the second one containing all others. This second one can easily be further subdivided into two subgroups:
+#1- Jerónimos, Rios Rosas
+#2-a) From Vicálvaro to Embajadores (28 neighbourhoods)
+#2-b) From Sol to El Tréntaiseis (8 neighbourhoods)
+
+Finally, subgroup 2 b) could be further subdivided into 
+  #2-b) i) Sol, San Blás, Pacífico
+  #2-b) ii) Moratalaz, Lista, Fuente del Berro, Castellana, El Tréntaiseis
+  
+I will be choosing three clusters for the model, since the distance is still quite a large value, 0.4.
+(For 4 clusters, we would be looking at a distance of 160 times smaller than 0.4, which may be overfitting the data.)
+------------------------------------------------------------------------
+
+11. Vamos a crear una nueva columna en el dataframe df_madrid con un nuevo identificador marcado por los clusters obtenidos. Esta columna la llamaremos neighb_id
+
+```{r}
+# Change vector clusters_3 into dataframe df_clusters_3, with same names that will go into df_madrid and remembering that the cluster numbers are factors:
+df_clusters_3 <- data.frame(
+  Neighbourhood = names(clusters_3),
+  neighb_id = as.factor(clusters_3) 
+)
+# Add column to df_madrid dataframe:
+library(dplyr)
+df_madrid_clusters_3 <- df_madrid |> inner_join(df_clusters_3[ ,c('Neighbourhood','neighb_id')], by = 'Neighbourhood')
+head(df_madrid_clusters_3)
+```
+------------------------------------------------------------------------
+
+12. Vamos a crear dos grupos, uno test y otro train.
+
+Theoretically, we should have subdivided these two groups before doing all the classification work. 
+However, here we are mostly trying to complete NA values and, most importantly, we don't have enough data.
+
+I will take 60% of the dataframe for training, and the remaining 40% for testing.
+
+```{r}
+set.seed(123)
+train_indices <- sample(seq_len(nrow(df_madrid_clusters_3)), size = 0.6 * nrow(df_madrid_clusters_3))
+df_train <- df_madrid_clusters_3[train_indices, ]
+df_test  <- df_madrid_clusters_3[-train_indices, ]
+
+```
+------------------------------------------------------------------------
+
+13. Tratamos de predecir los metros cuadrados en función del resto de columnas del dataframe.
+```{r}
+# For this first linear model, I will use the columns: Bathrooms, Bedrooms, Price, neighb_id
+model1 <- lm(Square.Meters ~ Bathrooms + Bedrooms + Price + neighb_id, data = df_train)
+cat('\nResults of model 1, based on Bathrooms, Bedrooms, Price, neighb_id: \n')
+summary(model1)
+```
+```{r}
+model2 <- lm(Square.Meters ~ Bathrooms + Bedrooms + Extra.People + neighb_id, data = df_train)
+cat('\nResults of model 2, based on Bathrooms, Bedrooms, Extra.People, neighb_id: \n')
+summary(model2)
+```
+
+```{r}
+model3 <- lm(Square.Meters ~ Bathrooms + Bedrooms + Accommodates, data = df_train)
+cat('\nResults of model 3, based on Bathrooms, Bedrooms, Accommodates: \n')
+summary(model3)
+```
+```{r}
+model4 <- lm(Square.Meters ~ Bathrooms + Bedrooms, data = df_train)
+cat('\nResults of model 4, based on Bathrooms, Bedrooms: \n')
+summary(model4)
+```
+------------------------------------------------------------------------
+
+14. Evaluar la calidad de vuestro modelo
+
+Look at residuals, RMSE, and R², etc. Check "central eléctrica".
+------------------------------------------------------------------------
+
+15. Si tuvieramos un anuncio de un apartamento para 6 personas (Accommodates), con 1 baño, con un precio de 80€/noche y 3 habitaciones en el barrio de Sol, con 3 camas y un review de 80. ¿Cuantos metros cuadrados tendría? Si tu modelo necesita algúna variable adicional puedes inventartela dentro del rango de valores del dataset. ¿Como varía sus metros cuadrados con cada habitación adicional?
+
+Perhaps our model does not have enough information for this, let's make a simple model, not too complex.
+------------------------------------------------------------------------
+
+16. Rellenar los Square.Meters con valor NA con el estimado con el modelo anterior.
+
+------------------------------------------------------------------------
