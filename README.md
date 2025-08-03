@@ -1,3 +1,4 @@
+ALG
 This is a practical exercise in algebra and geometry (use of arrays, matrices, dataframes, etc.) written in Python, my first assignment in the Pre-Bootcamp in Big Data with KeepCoding.
 In this exercise, I work with different datasets and produce several multivariant linear models, based on two different methods: Ordinary Least Squares (OLS) and Gradient Descent (GD). For both, I am programming the functions by hand, rather than using already-made algorithms. The results are then compared to those obtained using the sklearn.linear_model library.
 Aside from calculating the coefficients of the linear regression, scatter graphs of the data together with the regression line are plotted, as a way to practice creating and personalizing graphs using the matplotlib.pyplot library.
