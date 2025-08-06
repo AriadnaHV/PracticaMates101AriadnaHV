@@ -19,7 +19,7 @@ head(airbnb)
 
 ```{r}
 library(dplyr)
-df_madrid_draft <- airbnb |> select(City,Room.Type,Neighbourhood,Accommodates,Bathrooms,Bedrooms,Beds,Price,Square.Feet,Guests.Included,Extra.People,Review.Scores.Rating,Latitude, Longitude) |> filter (City == 'Madrid', Room.Type == 'Entire home/apt', Neighbourhood != '')
+df_madrid_draft <- airbnb |> dplyr::select(City,Room.Type,Neighbourhood,Accommodates,Bathrooms,Bedrooms,Beds,Price,Square.Feet,Guests.Included,Extra.People,Review.Scores.Rating,Latitude, Longitude) |> filter (City == 'Madrid', Room.Type == 'Entire home/apt', Neighbourhood != '')
 df_madrid <- df_madrid_draft[ , !(names(df_madrid_draft) %in% c("Room.Type", "City"))]  #Selects all columns except for "Room.Type" and "City" which are no longer needed
 head(df_madrid)
 ```
@@ -181,6 +181,7 @@ Hay muchos NAs, vamos a intentar crear un modelo que nos prediga cuantos son los
     cat('\nBartlett test of homogeneity of variances:\n')
     bartlett.test(Square.Meters ~ Neighbourhood, data = df_madrid_withoutNA_3)
     ```
+    
     ```{r}
     # Variances are clearly not homogeneous since the p-value is extremely small.
     # Could it be because we have those six neighbourhoods that are not normally distributed?
@@ -369,7 +370,10 @@ df_clusters_3 <- data.frame(
 # Add column to df_madrid dataframe:
 library(dplyr)
 df_madrid_clusters_3 <- df_madrid |> inner_join(df_clusters_3[ ,c('Neighbourhood','neighb_id')], by = 'Neighbourhood')
+df_madrid_clusters_3_withoutNA <- df_madrid_withoutNA |> inner_join(df_clusters_3[ ,c('Neighbourhood','neighb_id')], by = 'Neighbourhood')
+
 head(df_madrid_clusters_3)
+head(df_madrid_clusters_3_withoutNA)
 ```
 ------------------------------------------------------------------------
 
@@ -378,52 +382,232 @@ head(df_madrid_clusters_3)
 Theoretically, we should have subdivided these two groups before doing all the classification work. 
 However, here we are mostly trying to complete NA values and, most importantly, we don't have enough data.
 
-I will take 60% of the dataframe for training, and the remaining 40% for testing.
+I will take 70% of the dataframe for training, and the remaining 30% for testing.
 
 ```{r}
 set.seed(123)
-train_indices <- sample(seq_len(nrow(df_madrid_clusters_3)), size = 0.6 * nrow(df_madrid_clusters_3))
-df_train <- df_madrid_clusters_3[train_indices, ]
-df_test  <- df_madrid_clusters_3[-train_indices, ]
+train_indices <- sample(seq_len(nrow(df_madrid_clusters_3_withoutNA)), size = 0.7 * nrow(df_madrid_clusters_3_withoutNA))
+df_train <- df_madrid_clusters_3_withoutNA[train_indices, ]
+df_test  <- df_madrid_clusters_3_withoutNA[-train_indices, ]
 
 ```
 ------------------------------------------------------------------------
 
 13. Tratamos de predecir los metros cuadrados en función del resto de columnas del dataframe.
+
+First, I will use ggpairs() of the GGally library to get a sense of what variables are more strongly correlated to Square.Meters.
+
 ```{r}
-# For this first linear model, I will use the columns: Bathrooms, Bedrooms, Price, neighb_id
-model1 <- lm(Square.Meters ~ Bathrooms + Bedrooms + Price + neighb_id, data = df_train)
-cat('\nResults of model 1, based on Bathrooms, Bedrooms, Price, neighb_id: \n')
+colnames(df_train)
+```
+
+```{r}
+library(GGally)
+# First trying with those variables I believe to be most relevant
+ggpairs(df_train[, c("Square.Meters", "Accommodates", "Bathrooms", "Bedrooms", "Beds", "Price")])
+```
+CONCLUSION FROM 1st GGPAIRS():
+The coefficients closest to 1 in absolute value show a stronger correlation.
+None of the variables seems to have a very strong correlation with Square.Meters, but all have a moderately strong correlation of between 0.6 and 0.8.
+In this order:
+  Bathrooms (0.780)
+  Bedrooms (0.731)
+  Accommodates (0.704)
+  Beds (0.682)
+  Price (0.604)
+
+
+```{r}
+library(GGally)
+# And now trying variables that are probably less correlated
+ggpairs(df_train[ ,c("Square.Meters", "Guests.Included", "Extra.People", "Review.Scores.Rating", "Latitude", "Longitude")])
+```
+CONCLUSION FROM 2nd GGPAIRS():
+
+My hunch was correct. These variables are not relevant. I was wondering about Review.Scores.Rating but it seems to not be very influential. 
+The stronger correlation would be with Guests.Included and Extra.People, but both of these have a weak correlation of about 0.3 - 0.4.
+
+
+CONCLUSION FROM PRELIMINARY STUDY WITH GGPAIRS():
+
+The linear model should include the variables Bathrooms and Bedrooms. Other variables such as Accommodates, Beds, or Price may also be helpful in the model. In any case, it does not seem that the model will show a strong correlation. 
+Factors such as "neighb_id" were not included in the study since they do not have an inherent numerical order and thus would not be helpful for a quantitative linear model.
+
+
+TRYING SEVERAL LINEAR MODELS:
+```{r}
+model1 <- lm(Square.Meters ~ Bedrooms + Bathrooms + Price, data = df_train)
+cat('\nResults for model 1, calculating Square.Meters vs Bedrooms, Bathrooms, Price: \n')
 summary(model1)
 ```
+
 ```{r}
-model2 <- lm(Square.Meters ~ Bathrooms + Bedrooms + Extra.People + neighb_id, data = df_train)
-cat('\nResults of model 2, based on Bathrooms, Bedrooms, Extra.People, neighb_id: \n')
+model2 <- lm(Square.Meters ~ Bedrooms + Bathrooms + Extra.People, data = df_train)
+cat('\nResults for model 2, calculating Square.Meters vs Bedrooms, Bathrooms, Extra.People: \n')
 summary(model2)
 ```
 
 ```{r}
-model3 <- lm(Square.Meters ~ Bathrooms + Bedrooms + Accommodates, data = df_train)
-cat('\nResults of model 3, based on Bathrooms, Bedrooms, Accommodates: \n')
+model3 <- lm(Square.Meters ~ Bedrooms + Bathrooms + Accommodates, data = df_train)
+cat('\nResults for model 3, calculating Square.Meters vs Bedrooms, Bathrooms,  Accommodates: \n')
 summary(model3)
 ```
+
 ```{r}
-model4 <- lm(Square.Meters ~ Bathrooms + Bedrooms, data = df_train)
-cat('\nResults of model 4, based on Bathrooms, Bedrooms: \n')
+model4 <- lm(Square.Meters ~ Bedrooms + Bathrooms, data = df_train)
+cat('\nResults for model 4, calculating Square.Meters vs Bedrooms, Bathrooms: \n')
 summary(model4)
 ```
+
+```{r}
+model5 <- lm(Square.Meters ~ Bedrooms, data = df_train)
+cat('\nResults for model 5, calculating Square.Meters vs Bedrooms: \n')
+summary(model5)
+```
+```{r}
+na_bathrooms <- sum(is.na(df_train$Bathrooms))
+na_bedrooms <- sum(is.na(df_train$Bedrooms))
+na_accommodates <- sum(is.na(df_train$Accommodates))
+na_price <- sum(is.na(df_train$Price))
+na_beds <- sum(is.na(df_train$Beds))
+cat('Missing values for Bathrooms, Bedrooms, Accommodates, Price, Beds:\n')
+cat(na_bathrooms, na_bedrooms, na_accommodates, na_price, na_beds, sep = ', ')
+```
+
+When just using the Bedrooms variable (model5, R² adj = 0.5304), the model is significantly weaker than when also incorporating Bathrooms (model4, R² adj = 0.6583). 
+Including an additional variable, such as Price (model1, R² adj = 0.6757) or Extra.People (model2, R² adj = 0.6762) only very slightly improves the model, and the change in prediction of Square.Meters is less than 1 m² (30.89 vs 30.1 residual standard error).
+
+For the sake of simplicity, I will keep model4, which only includes the two variables with p-values well below 0.01 (next most significant variable would be Price, with p-value = 0.08, outside the 95% confidence interval).
+
+        Results for model 4, calculating Square.Meters vs Bedrooms, Bathrooms: 
+        
+        Call:
+        lm(formula = Square.Meters ~ Bedrooms + Bathrooms, data = df_train)
+        
+        Residuals:
+            Min      1Q  Median      3Q     Max 
+        
+        Coefficients:
+                    Estimate Std. Error t value Pr(>|t|)    
+        (Intercept)   15.083      4.518   3.338  0.00113 ** 
+        Bedrooms      18.642      2.405   7.750 3.42e-12 ***
+        Bathrooms     17.944      4.002   4.484 1.70e-05 ***
+        ---
+        Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+        
+        Residual standard error: 20.67 on 119 degrees of freedom
+          (3308 observations deleted due to missingness)
+        Multiple R-squared:  0.6332,	Adjusted R-squared:  0.627 
+        F-statistic: 102.7 on 2 and 119 DF,  p-value: < 2.2e-16
+
+The R² value of approximately 63% indicates that the model is fairly strong. The Bedrooms variable, with a p-value of 3.42 x 10^-12 is extremely relevant and the Bathrooms variable, with a p-value of 1.70 x 10^-5 is also about 3000 times below 0.05.
+The residual standard error gives us the mean error we might be making in our predictions, less than 20.7 m², in 95% of cases.
+The intercept would give the size of an apartment with no bedrooms or bathrooms, which does not really make sense, but it gives us a sense of the size of the rest of the rooms (kitchen or living room). 
+Each bedroom adds 18.6 m² on average to the size of the apartment, and each bathroom an additional 17.9 m².
+
+The resulting equation for the linear model is:
+[
+\boxed{
+\text{Square.Meters} = 15.083 + 18.642 \times \text{Bedrooms} + 17.944 \times \text{Bathrooms}
+}
+]
+
 ------------------------------------------------------------------------
 
 14. Evaluar la calidad de vuestro modelo
 
-Look at residuals, RMSE, and R², etc. Check "central eléctrica".
+I will now proceed to the evaluation of the model. First I will predict the values of Square.Meters using the training data and compare it to the actual values:
+
+```{r}
+df_train$Square.Meters_est<-predict(model4,df_train)
+plot(df_train$Square.Meters,(df_train$Square.Meters - df_train$Square.Meters_est)^2)
+```
+
+```{r}
+ggplot(df_train, aes(x=Square.Meters, y=Square.Meters - Square.Meters_est)) + geom_point()
+#plot(df_train$Square.Meters,(df_train$Square.Meters - df_train$Square.Meters_est))
+rmse <- paste("RMSE:", sqrt(mean((df_train$Square.Meters - df_train$Square.Meters_est)^2, na.rm = TRUE)))
+cat(rmse, '\n\n')
+caret::postResample(pred = df_train$Square.Meters_est, obs = df_train$Square.Meters)
+```
+```{r}
+hist(df_train$Square.Meters - df_train$Square.Meters_est,40)
+qqnorm(df_train$Square.Meters - df_train$Square.Meters_est)
+qqline(df_train$Square.Meters - df_train$Square.Meters_est, col = 'orange', lwd =2)
+```
+**CONCLUSION FROM MODEL BASED ON TRAINING DATA**:
+
+The linear model seems to fit fairly well the sample. The histogram, with high values in the center, tells us that a good amount of the data follows a normal distribution. In the QQ plot, we see that the yellow, theoretical line, matches the actual results quite well for quantiles between -1.5 and +1.5. 
+Outside of this range, the data no longer follows the model well. 
+
+This was to be expected for a couple of reasons. First of all, in the original dataset, one apartment was much larger than the others (perhaps an error in the value), and is possibly behaving as an outlier, which would explain the skew on the right side. Secondly, we made a decision early on to only keep those "entire apartments" that were above 20 m², an **arbitrary value that is probably too small to represent an entire apartment**. Thus our data probably includes individual rooms that are incorrectly labeled as "entire apartments". This second aspect would explain the skew on the left side of too many "entire apartments" having a surface area too low.
+
+Overall, our model seems fairly strong in predicting middle values of the surface area. Now let's apply it to the testing data.
+
+```{r}
+df_test$Square.Meters_est<-predict(model4,df_test)
+#plot(df_test$Square.Meters,(df_test$Square.Meters - df_test$Square.Meters_est)^2)
+plot(df_test$Square.Meters,(df_test$Square.Meters - df_test$Square.Meters_est)^2,  
+     xlim = c(0, 500), ylim = c(0, 35000)) #Forcing axes limits to similar values as the training data for esier comparison
+```
+
+```{r}
+#ggplot(df_test, aes(x=Square.Meters, y=Square.Meters - Square.Meters_est), , xlim = c(0,500), ylim = c(-110,210)) + geom_point()
+ggplot(df_test, aes(x = Square.Meters, y = Square.Meters - Square.Meters_est)) +
+  geom_point() +
+  coord_cartesian(xlim = c(0, 500), ylim = c(-110, 210))  # Adjust x and y-axis similar to training data for facilitating comparison
+rmse <- paste("RMSE:", sqrt(mean((df_test$Square.Meters - df_test$Square.Meters_est)^2, na.rm = TRUE)))
+cat(rmse, '\n\n')
+caret::postResample(pred = df_test$Square.Meters_est, obs = df_test$Square.Meters)
+```
+
+```{r}
+hist(df_test$Square.Meters - df_test$Square.Meters_est,40)
+qqnorm(df_test$Square.Meters - df_test$Square.Meters_est)
+qqline(df_test$Square.Meters - df_test$Square.Meters_est, col = 'orange', lwd =2)
+```
+**CONCLUSION FROM TRAINING AND TESTING DATA**
+
+Comparing the results from the testing and training data, it seems that the testing data adjusts to the model much better than the training data. While this is not a regular occurrence, in this case I believe it makes sense because the two data points that were much higher than the others just happened to both be in the training data. These two points vastly increased the RMSE, which is much lower in the testing data (30.5 vs 18.4).
+
+The model overall seems strong, as it did not overfit the training data and thus was a good fit for the testing data. 
+
 ------------------------------------------------------------------------
 
 15. Si tuvieramos un anuncio de un apartamento para 6 personas (Accommodates), con 1 baño, con un precio de 80€/noche y 3 habitaciones en el barrio de Sol, con 3 camas y un review de 80. ¿Cuantos metros cuadrados tendría? Si tu modelo necesita algúna variable adicional puedes inventartela dentro del rango de valores del dataset. ¿Como varía sus metros cuadrados con cada habitación adicional?
 
-Perhaps our model does not have enough information for this, let's make a simple model, not too complex.
+```{r}
+df_clusters_3
+```
+
+```{r}
+library(dplyr)
+# First, we're looking for the neighb_id:
+neighb_id_sol <- df_clusters_3 |>
+  filter(Neighbourhood == "Sol") |>
+  pull(neighb_id)
+paste0("The neighbourhood identifier is:",neighb_id_sol)
+# Then we create the dataframe with the known information:
+df_apartment<-data.frame(neighb_id=neighb_id_sol, Bathrooms=1, Bedrooms=3, Price=80, Accommodates=6)
+# Finally, we make the prediction:
+pred_m2<-predict(model4,df_apartment)
+paste("The Square.Meters prediction is:",round(pred_m2))
+```
+
 ------------------------------------------------------------------------
 
 16. Rellenar los Square.Meters con valor NA con el estimado con el modelo anterior.
 
+```{r}
+head(df_madrid)
+```
+
+
+```{r}
+df_madrid_completed <- df_madrid |> inner_join(df_clusters_3,by=c("Neighbourhood"="Neighbourhood")) 
+df_madrid_completed$Square.Meters[is.na(df_madrid_completed$Square.Meters)]<-
+ round(predict(model4,df_madrid_completed[is.na(df_madrid_completed$Square.Meters),]))
+
+head(df_madrid_completed)
+```
 ------------------------------------------------------------------------
