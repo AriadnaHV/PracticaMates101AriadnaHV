@@ -9,5 +9,4 @@ Throughout the code, I try to include comments to clarify the different steps. B
 Regarding Practica-AriadnaHeinz.qmd:
 
 This is a practical exercise in statistics and datamining written in R using RStudio. It is my second assignment in the Pre-Bootcamp in Big Data with KeepCoding. 
-In this exercise, I work with data from AirBnB rentals in the Madrid area. Many apartments are missing the value of the surface area. The goal of the exercise is to come up with a model that will help fill in the missing values and evaluate the model.
-The work is not completely finalized yet.
+In this exercise, I work with data from AirBnB rentals in the Madrid area. Many apartments are missing the value of the surface area. The goal of the exercise is to come up with a model that will help fill in the missing values and evaluate the model, and then of course to complete the dataset by using the model to fill in the missing values.
